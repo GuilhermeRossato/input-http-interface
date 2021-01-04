@@ -401,12 +401,13 @@ int main(int argn, char ** argc) {
 					"		<li><a href=\"/keyboard/press/\">Press State of Key</a> (set down and then back up after a specified amount of time)</li>"
 					"		<li><a href=\"/keyboard/type/\">Type a String</a> (type a free-form string in the post body in the current keyboard context)</li>"
 					"	</ul></li>\r\n"
+					"   <li>You may also get <a href=\"/screen-size/\">screen size</a> and <a href=\"/screen-size/?json\">screen size in JSON format</a></li>"
 					"</ul>"
 				),
 				content_buffer
 			);
 		} else if (request_method == 1 && does_first_start_with_second(&recv_buffer[4], "/mouse/pos/") && (recv_buffer[15] == ' ' || recv_buffer[15] == '?')) {
-			int is_json_format = does_first_start_with_second(&recv_buffer[15], "?format=js");
+			int is_json_format = does_first_start_with_second(&recv_buffer[4 + strlen("/mouse/pos/")], "?js");
 
 			POINT pt;
 			if (GetCursorPos(&pt) != 0) {
@@ -424,7 +425,7 @@ int main(int argn, char ** argc) {
 						content_buffer,
 						sizeof(content_buffer),
 						is_json_format ? "{\"x\": %I64d, \"y\": %I64d}" : "%I64d,%I64d",
-						pt.x, pt.y
+						(int64_t) pt.x, (int64_t) pt.y
 					),
 					content_buffer
 				);
@@ -446,8 +447,8 @@ int main(int argn, char ** argc) {
 					content_buffer
 				);
 			}
-		} else if (request_method == 1 && does_first_start_with_second(&recv_buffer[4], "/size/")) {
-			int is_json_format = does_first_start_with_second(&recv_buffer[4], "/size/?format=js");
+		} else if (request_method == 1 && does_first_start_with_second(&recv_buffer[4], "/screen-size/")) {
+			int is_json_format = does_first_start_with_second(&recv_buffer[strlen("/screen-size/")+4], "?js");
 
 			buffer_size = snprintf(
 				buffer,
@@ -466,6 +467,16 @@ int main(int argn, char ** argc) {
 					screen_width, screen_height
 				),
 				content_buffer
+			);
+		} else {
+			buffer_size = snprintf(
+				buffer,
+				OUTPUT_BUFFER_SIZE,
+				"HTTP/1.1 404 Not Found\r\n"
+				"Content-Type: text/html; charset=UTF-8\r\n"
+				"Content-Length: 0\r\n"
+				"Connection: close\r\n"
+				"\r\n"
 			);
 		}
 		send(

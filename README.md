@@ -32,6 +32,10 @@ To move the mouse to a specific position slowly (like a human would):
 
 **Unimplemented** `POST` http://localhost:8082/mouse/move/?x=100&y=100&speed=3
 
+To get the screen size (to know the limits of the mouse) in JSON format:
+
+`GET` http://localhost:8082/screen-size/?json
+
 To get the state of the left mouse button in a JSON format:
 
 **Unimplemented** `GET` http://localhost:8082/mouse/get/left/?json
@@ -46,7 +50,7 @@ To set the right mouse button down and keep it down (until you or the user reque
 
 To request a middle mouse button press at the current mouse position and keep it down for 1.5 seconds
 
-**Unimplemented** `POST` http://localhost:8082/mouse/press/middle/&time=1.5
+**Unimplemented** `POST` http://localhost:8082/mouse/press/middle/?time=1.5
 
 To check if the right arrow key is pressed down in JSON format:
 

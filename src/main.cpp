@@ -388,9 +388,11 @@ int main(int argn, char ** argc) {
 					"<h1>Desktop Control Utility</h1><p>You can send HTTP requests to send inputs to this computer.</p>\r\n"
 					"<ul>"
 					"	<li><b>Mouse Index</b><ul>\r\n"
-					"		<li><a href=\"/mouse/pos/\">Get Mouse Position</a></li>"
-					"		<li><a href=\"/mouse/pos/?json\">Get Mouse Position in JSON format</a></li>"
-					"		<li><a href=\"/mouse/get/\">Get Mouse Button State</a> (verify if a mouse button is down)</li>"
+					"		<li><a href=\"/mouse/pos/\">Get Mouse Position</a> in <a href=\"/mouse/pos/?json\">JSON format</a></li>"
+					"		<li><a href=\"/mouse/get/\">Get All Mouse Button States</a> in <a href=\"/mouse/get/?json\">JSON format</a> (verify if any mouse button is down)</li>"
+					"		<li><a href=\"/mouse/get/left/\">Get Left Mouse Button State</a> in <a href=\"/mouse/get/left/?json\">JSON format</a></li>"
+					"		<li><a href=\"/mouse/get/middle/\">Get Middle Mouse Button State</a> in <a href=\"/mouse/get/middle/?json\">JSON format</a></li>"
+					"		<li><a href=\"/mouse/get/right/\">Get Right Mouse Button State</a> in <a href=\"/mouse/get/right/?json\">JSON format</a></li>"
 					"		<li><a href=\"/mouse/move/\">Move or Change Mouse Position</a></li>"
 					"		<li><a href=\"/mouse/press/\">Press Mouse Button</a> (press and release a mouse button after a specified amount of time)</li>"
 					"		<li><a href=\"/mouse/set/\">Set Mouse Button State</a></li>"
@@ -468,6 +470,70 @@ int main(int argn, char ** argc) {
 				),
 				content_buffer
 			);
+		} else if (request_method == 1 && does_first_start_with_second(&recv_buffer[4], "/mouse/get/")) {
+			int mouse_button = does_first_start_with_second(&recv_buffer[4], "/mouse/get/left") ? 4 :
+				does_first_start_with_second(&recv_buffer[4], "/mouse/get/middle") ? 6 :
+				does_first_start_with_second(&recv_buffer[4], "/mouse/get/right") ? 5 : 0;
+
+			int is_json_format = does_first_start_with_second(&recv_buffer[strlen("/mouse/get/")+mouse_button+4], "?js") || does_first_start_with_second(&recv_buffer[strlen("/mouse/get/")+mouse_button+5], "?js");
+
+
+			if (mouse_button == 0) {
+				// all buttons
+				int is_left_pressed = ((GetKeyState(VK_LBUTTON) & 0x8000) != 0);
+				int is_middle_pressed = ((GetKeyState(VK_MBUTTON) & 0x8000) != 0);
+				int is_right_pressed = ((GetKeyState(VK_RBUTTON) & 0x8000) != 0);
+
+				buffer_size = snprintf(
+					buffer,
+					OUTPUT_BUFFER_SIZE,
+					"HTTP/1.1 200 OK\r\n"
+					"Content-Type: %s; charset=UTF-8\r\n"
+					"Content-Length: %d\r\n"
+					"Connection: close\r\n"
+					"\r\n"
+					"%s",
+					is_json_format ? "application/json" : "text/html",
+					snprintf(
+						content_buffer,
+						sizeof(content_buffer),
+						is_json_format ? "{\"left\": %s, \"middle\": %s, \"right\": %s}" : "%s%s%s",
+						is_json_format ? (is_left_pressed ? "true" : "false") : (is_left_pressed ? "1" : "0"),
+						is_json_format ? (is_middle_pressed ? "true" : "false") : (is_middle_pressed ? "1" : "0"),
+						is_json_format ? (is_right_pressed ? "true" : "false") : (is_right_pressed ? "1" : "0")
+					),
+					content_buffer
+				);
+			} else {
+				int is_pressed;
+				if (mouse_button == 6) {
+					is_pressed = ((GetKeyState(VK_MBUTTON) & 0x8000) != 0);
+				} else if (mouse_button == 5) {
+					is_pressed = ((GetKeyState(VK_RBUTTON) & 0x8000) != 0);
+				} else {
+					// mouse_button == 4
+					is_pressed = ((GetKeyState(VK_LBUTTON) & 0x8000) != 0);
+				}
+
+				buffer_size = snprintf(
+					buffer,
+					OUTPUT_BUFFER_SIZE,
+					"HTTP/1.1 200 OK\r\n"
+					"Content-Type: %s; charset=UTF-8\r\n"
+					"Content-Length: %d\r\n"
+					"Connection: close\r\n"
+					"\r\n"
+					"%s",
+					is_json_format ? "application/json" : "text/html",
+					snprintf(
+						content_buffer,
+						sizeof(content_buffer),
+						is_json_format ? "{\"pressed\": %s}" : "%s",
+						is_json_format ? (is_pressed ? "true" : "false") : (is_pressed ? "1" : "0")
+					),
+					content_buffer
+				);
+			}
 		} else {
 			buffer_size = snprintf(
 				buffer,

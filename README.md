@@ -36,9 +36,13 @@ To get the screen size (to know the limits of the mouse) in JSON format:
 
 `GET` http://localhost:8082/screen-size/?json
 
-To get the state of the left mouse button in a JSON format:
+To get the state of the left mouse button in a digit (text) format (0 or 1, where 1 means it is pressed):
 
-**Unimplemented** `GET` http://localhost:8082/mouse/get/left/?json
+`GET` http://localhost:8082/mouse/get/left/
+
+To get the state of the all mouse buttons in a JSON format:
+
+`GET` http://localhost:8082/mouse/get/?json
 
 To request a left press at the current mouse position for the default duration of 0.1s:
 

@@ -244,6 +244,61 @@ int interpret_http_query(
 	return 1;
 }
 
+// The width of the virtual screen, in pixels.
+static int vscreenWidth = -1; // not initialized
+
+// The height of the virtual screen, in pixels.
+static int vscreenHeight = -1; // not initialized
+
+// The coordinates for the left side of the virtual screen.
+static int vscreenMinX = 0;
+
+// The coordinates for the top of the virtual screen.
+static int vscreenMinY = 0;
+
+// taken from robotjs npm module from the `mouse.c` file
+void move_mouse(int x, int y) {
+	#define MOUSE_COORD_TO_ABS(coord, width_or_height) ((65536 * (coord) / width_or_height) + ((coord) < 0 ? -1 : 1))
+
+	INPUT mouseInput = {0};
+	mouseInput.type = INPUT_MOUSE;
+	mouseInput.mi.dx = (long) MOUSE_COORD_TO_ABS(x-vscreenMinX, vscreenWidth);
+	mouseInput.mi.dy = (long) MOUSE_COORD_TO_ABS(y-vscreenMinY, vscreenHeight);
+	mouseInput.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK;
+	mouseInput.mi.time = 0; // timestamp is automatic
+	SendInput(1, &mouseInput, sizeof(mouseInput));
+}
+
+// fast hypot()
+// Taken from this stackoverflow: https://stackoverflow.com/questions/3506404/fast-hypotenuse-algorithm-for-embedded-processor#3507882
+static double crude_hypot(double x, double y) {
+	double l = fabs(x); /* max(|x|, |y|) */
+	double s = fabs(y); /* min(|x|, |y|) */
+
+	if (l > s) {
+		double t = l;
+		l = s;
+		s = t;
+	}
+
+	return ((1.4142135623730950488016887 - 1.0) * s) + l;
+}
+
+static unsigned long x=123456789, y=362436069, z=521288629;
+double xorshf96(void) {
+	unsigned long t;
+	x ^= x << 16;
+	x ^= x >> 5;
+	x ^= x << 1;
+
+	t = x;
+	x = y;
+	y = z;
+	z = t ^ x ^ y;
+
+	return z / 4294924910.0;
+}
+
 // Everything in a single function is bad, but if you attempt to fix it instead of complaining you'll understand the reasoning.
 int main(int argn, char ** argc) {
 	char * portnumber_str = argn >= 2 ? argc[2] : DEFAULT_PORT;
@@ -311,6 +366,7 @@ int main(int argn, char ** argc) {
     int64_t count = 0;
 	struct sockaddr_in client_addr;
 	int i, buffer_size;
+	POINT pt;
 
 	int64_t screen_width = GetSystemMetrics(SM_CXSCREEN); // Alternative: GetDeviceCaps( hdcPrimaryMonitor, HORZRES)
 	int64_t screen_height = GetSystemMetrics(SM_CYSCREEN); // Alternative: GetDeviceCaps( hdcPrimaryMonitor, VERTRES)
@@ -319,6 +375,11 @@ int main(int argn, char ** argc) {
 
 	print_timestamp(1, 1);
     printf("Info: Waiting for connection at port %I64d\n", (int64_t) portnumber);
+
+	vscreenWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+	vscreenHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+	vscreenMinX = GetSystemMetrics(SM_XVIRTUALSCREEN);
+	vscreenMinY = GetSystemMetrics(SM_YVIRTUALSCREEN);
 
     while (1) {
 		if (listen(sock, 10) == SOCKET_ERROR) {
@@ -344,12 +405,12 @@ int main(int argn, char ** argc) {
 			continue;
 		}
 
-		print_timestamp(1, 1);
-		printf("Info: Connection %I64d received %I64d bytes from \"%s\" at port %d\n", ++count, (int64_t) recv_length, inet_ntoa(client_addr.sin_addr), htons(client_addr.sin_port));
-
 		int request_method =
 			does_first_start_with_second(&recv_buffer[0], "GET /") ? 1 :
 			does_first_start_with_second(&recv_buffer[0], "POST /") ? 2 : 0;
+
+		print_timestamp(1, 1);
+		printf("Info: Connection %I64d received %I64d bytes from \"%s\" at port %d\n", ++count, (int64_t) recv_length, inet_ntoa(client_addr.sin_addr), htons(client_addr.sin_port));
 
 		if (request_method == 0) {
 			print_timestamp(1, 1);
@@ -411,7 +472,6 @@ int main(int argn, char ** argc) {
 		} else if (request_method == 1 && does_first_start_with_second(&recv_buffer[4], "/mouse/pos/") && (recv_buffer[15] == ' ' || recv_buffer[15] == '?')) {
 			int is_json_format = does_first_start_with_second(&recv_buffer[4 + strlen("/mouse/pos/")], "?js");
 
-			POINT pt;
 			if (GetCursorPos(&pt) != 0) {
 				buffer_size = snprintf(
 					buffer,
@@ -477,7 +537,6 @@ int main(int argn, char ** argc) {
 
 			int is_json_format = does_first_start_with_second(&recv_buffer[strlen("/mouse/get/")+mouse_button+4], "?js") || does_first_start_with_second(&recv_buffer[strlen("/mouse/get/")+mouse_button+5], "?js");
 
-
 			if (mouse_button == 0) {
 				// all buttons
 				int is_left_pressed = ((GetKeyState(VK_LBUTTON) & 0x8000) != 0);
@@ -534,6 +593,327 @@ int main(int argn, char ** argc) {
 					content_buffer
 				);
 			}
+		} else if (request_method == 2 && does_first_start_with_second(&recv_buffer[5], "/mouse/move/")) {
+			int x = -1;
+			int y = -1;
+			int dx = -1;
+			int dy = -1;
+			int speed = 0;
+			long value;
+			int veredict;
+			int result;
+
+			int query_interpretation_error_code = 0;
+
+			for (i = 4 + strlen("/mouse/move/"); recv_buffer[i] != ' ' && recv_buffer[i] != '\r' && recv_buffer[i] != '\n' && recv_buffer[i] != '\0'; i++) {
+				if (recv_buffer[i] == '?' || recv_buffer[i] == '&') {
+					continue;
+				}
+				int parameter_code = (
+					does_first_start_with_second(&recv_buffer[i], "x=") ? 1 :
+					does_first_start_with_second(&recv_buffer[i], "y=") ? 2 :
+					does_first_start_with_second(&recv_buffer[i], "dx=") ? 3 :
+					does_first_start_with_second(&recv_buffer[i], "dy=") ? 4 :
+					does_first_start_with_second(&recv_buffer[i], "speed=") ? 5 : 0
+				);
+
+				if (parameter_code == 0) {
+					// skip to next query parameter or end of line
+					for (;recv_buffer[i] != ' ' && recv_buffer[i] != '\r' && recv_buffer[i] != '\n' && recv_buffer[i] != '\0' && recv_buffer[i] != '&'; i++);
+					i--;
+					continue;
+				}
+
+				i += (
+					parameter_code == 1 ? strlen("x=") :
+					parameter_code == 2 ? strlen("y=") :
+					parameter_code == 3 ? strlen("dx=") :
+					parameter_code == 4 ? strlen("dy=") :
+					parameter_code == 5 ? strlen("speed=") : 0
+				);
+
+				convert_string_to_long(&recv_buffer[i], &value, &veredict);
+
+				if (veredict == 0) {
+					query_interpretation_error_code = 1; // Invalid non-number parameter
+					break;
+				} else if (parameter_code == 1 && value >= 0 && value <= 10000) {
+					x = (int) value;
+				} else if (parameter_code == 2 && value >= 0 && value <= 10000) {
+					y = (int) value;
+				} else if (parameter_code == 3 && value >= -10000 && value <= 10000) {
+					dx = (int) value;
+				} else if (parameter_code == 4 && value >= -10000 && value <= 10000) {
+					dy = (int) value;
+				} else if (parameter_code == 5 && value >= 0 && value <= 11) {
+					speed = (int) value;
+				} else {
+					print_timestamp(1, 1);
+					printf("Client sent parameter %d in the query string with value %d and that was invalid\n", parameter_code, value);
+					query_interpretation_error_code = 2; // Invalid range
+					break;
+				}
+
+				// skip to next query parameter or end of line
+				for (;recv_buffer[i] != ' ' && recv_buffer[i] != '\r' && recv_buffer[i] != '\n' && recv_buffer[i] != '\0' && recv_buffer[i] != '&'; i++);
+				i--;
+			}
+
+			// Skip to the body of the request
+			for (;recv_buffer[i] != '\0'; i++) {
+				if (recv_buffer[i-4] == '\r' && recv_buffer[i-3] == '\n' && recv_buffer[i-2] == '\r' && recv_buffer[i-1] == '\n') {
+					break;
+				}
+			}
+
+			if (recv_buffer[i] != '\0' && recv_buffer[i-4] == '\r' && recv_buffer[i-3] == '\n' && recv_buffer[i-2] == '\r' && recv_buffer[i-1] == '\n') {
+				// try again to get the parameters, this time from body
+				for (;i < recv_length && recv_buffer[i] != ' ' && recv_buffer[i] != '\r' && recv_buffer[i] != '\n' && recv_buffer[i] != '\0'; i++) {
+					if (recv_buffer[i] == '?' || recv_buffer[i] == '&') {
+						continue;
+					}
+					int parameter_code = (
+						does_first_start_with_second(&recv_buffer[i], "x=") ? 1 :
+						does_first_start_with_second(&recv_buffer[i], "y=") ? 2 :
+						does_first_start_with_second(&recv_buffer[i], "dx=") ? 3 :
+						does_first_start_with_second(&recv_buffer[i], "dy=") ? 4 :
+						does_first_start_with_second(&recv_buffer[i], "speed=") ? 5 : 0
+					);
+
+					if (parameter_code == 0) {
+						// skip to next query parameter or end of line
+						for (;recv_buffer[i] != ' ' && recv_buffer[i] != '\r' && recv_buffer[i] != '\n' && recv_buffer[i] != '\0' && recv_buffer[i] != '&'; i++);
+						i--;
+						continue;
+					}
+
+					i += (
+						parameter_code == 1 ? strlen("x=") :
+						parameter_code == 2 ? strlen("y=") :
+						parameter_code == 3 ? strlen("dx=") :
+						parameter_code == 4 ? strlen("dy=") :
+						parameter_code == 5 ? strlen("speed=") : 0
+					);
+
+					convert_string_to_long(&recv_buffer[i], &value, &veredict);
+
+					if (veredict == 0) {
+						query_interpretation_error_code = 1; // Invalid non-number parameter
+						break;
+					} else if (parameter_code == 1 && value >= 0 && value <= 10000) {
+						x = (int) value;
+					} else if (parameter_code == 2 && value >= 0 && value <= 10000) {
+						y = (int) value;
+					} else if (parameter_code == 3 && value >= -10000 && value <= 10000) {
+						dx = (int) value;
+					} else if (parameter_code == 4 && value >= -10000 && value <= 10000) {
+						dy = (int) value;
+					} else if (parameter_code == 5 && value >= 0 && value <= 11) {
+						speed = (int) value;
+					} else {
+						print_timestamp(1, 1);
+						printf("Client sent parameter %d in the body with value %d and that was invalid\n", parameter_code, value);
+						query_interpretation_error_code = 2; // Invalid range
+						break;
+					}
+
+					// skip to next query parameter or end of line
+					for (;recv_buffer[i] != ' ' && recv_buffer[i] != '\r' && recv_buffer[i] != '\n' && recv_buffer[i] != '\0' && recv_buffer[i] != '&'; i++);
+					i--;
+				}
+			}
+
+			if (query_interpretation_error_code == 0) {
+				if (GetCursorPos(&pt) == 0) {
+					query_interpretation_error_code = 3;
+				} else if (pt.x < -10000 || pt.x > 10000 || pt.y < -10000 || pt.y > 10000) {
+					query_interpretation_error_code = 4;
+				}
+			}
+
+			if (query_interpretation_error_code != 0) {
+				buffer_size = snprintf(
+					buffer,
+					OUTPUT_BUFFER_SIZE,
+					"HTTP/1.1 403 Forbidden\r\n"
+					"Content-Type: text/html; charset=UTF-8\r\n"
+					"Content-Length: %d\r\n"
+					"Connection: close\r\n"
+					"\r\n"
+					"%s",
+					snprintf(
+						content_buffer,
+						sizeof(content_buffer),
+						query_interpretation_error_code == 1 ? "Invalid non-numeric parameter" :
+						query_interpretation_error_code == 2 ? "Invalid parameter value (out of bounds)" :
+						query_interpretation_error_code == 3 ? "Operational system interface for reading current mouse position failed" :
+						query_interpretation_error_code == 4 ? "Operational system interface for reading current mouse position returned invalid values" :
+						"Unknown error"
+					),
+					content_buffer
+				);
+			} else {
+				int target_x;
+				int target_y;
+				double v_dist;
+				if (x != -1 && x >= 0) {
+					target_x = x;
+				} else if (dx != -1) {
+					target_x = pt.x + dx;
+				} else {
+					target_x = pt.x;
+				}
+				if (target_x < 0) {
+					target_x = 0;
+				} else if (target_x > screen_width) {
+					target_x = screen_width - 1;
+				}
+				if (y != -1 && y >= 0) {
+					target_y = y;
+				} else if (dy != -1) {
+					target_y = pt.y + dy;
+				} else {
+					target_y = pt.y;
+				}
+				if (target_y < 0) {
+					target_y = 0;
+				} else if (target_y > screen_height) {
+					target_y = screen_height - 1;
+				}
+				print_timestamp(1, 1);
+				printf("Client requested mouse movement from %d,%d to %d,%d with speed %d\n", (int) pt.x, (int) pt.y, (int) target_x, (int) target_y, (int) speed);
+
+				buffer_size = snprintf(
+					buffer,
+					OUTPUT_BUFFER_SIZE,
+					"HTTP/1.1 200 OK\r\n"
+					"Content-Type: text/html; charset=UTF-8\r\n"
+					"Content-Length: 2\r\n"
+					"Connection: close\r\n"
+					"\r\n"
+				);
+
+				send(
+					msg_sock,
+					buffer,
+					buffer_size,
+					0
+				);
+
+				if (speed >= 1) {
+					double vx = 0, vy = 0, distance = 0;
+					int limiter = 10000;
+					for (int limiter = 0; limiter < 10000; limiter++) {
+						distance = crude_hypot((double) pt.x - target_x, (double) pt.y - target_y);
+						if (distance <= 1.5) {
+							break;
+						}
+						double pull = 5.0 + xorshf96() * 495.0;
+						vx += (pull * ((double)target_x - pt.x)) / distance;
+						vy += (pull * ((double)target_y - pt.y)) / distance;
+
+						v_dist = crude_hypot(vx, vy);
+						vx /= v_dist;
+						vy /= v_dist;
+
+						pt.x += floor(vx + 0.5);
+						pt.y += floor(vy + 0.5);
+
+						if (pt.x >= screen_width) {
+							pt.x = screen_width-1;
+						}
+						if (pt.y >= screen_height) {
+							pt.y = screen_height-1;
+						}
+
+						move_mouse(pt.x, pt.y);
+
+						DWORD time_to_sleep;
+						if (speed == 1) {
+							time_to_sleep = 0;
+						} else if (speed == 2) {
+							time_to_sleep = 1;
+						} else {
+							time_to_sleep = ((double) 0.7 + (speed - 0.7) * ((double) xorshf96()));
+						}
+						if (time_to_sleep <= 0) {
+							time_to_sleep = 1;
+						}
+						if (time_to_sleep > 50) {
+							time_to_sleep = 50;
+						}
+						Sleep(time_to_sleep);
+					}
+				}
+				if (pt.x != target_x || pt.y != target_y) {
+					move_mouse(target_x, target_y);
+				}
+				buffer_size = snprintf(
+					buffer,
+					OUTPUT_BUFFER_SIZE,
+					"OK"
+				);
+			}
+		} else if (request_method == 1 && does_first_start_with_second(&recv_buffer[4], "/mouse/move/")) {
+			// Form to move mouse
+			buffer_size = snprintf(
+				buffer,
+				OUTPUT_BUFFER_SIZE,
+				"HTTP/1.1 200 OK\r\n"
+				"Content-Type: text/html; charset=UTF-8\r\n"
+				"Content-Length: %d\r\n"
+				"Connection: close\r\n"
+				"\r\n"
+				"%s",
+				snprintf(
+					content_buffer,
+					sizeof(content_buffer),
+					"<h2>Mouse Movement</h2><p>Use the form below to create a POST request to move the mouse.</p>\r\n"
+					"<form style='margin-left: 15px' method='POST'>"
+					"<p class='specific'><label for='x'>X (Horizontal position)</label><br/>"
+					"<input type='number' name='x' value='0' min='0' max='%I64d' /></p>"
+					"<p class='specific'><label for='y'>Y (Vertical position)</label><br/>"
+					"<input type='number' name='y' value='0' min='0' max='%I64d' /></p>"
+					"<p class='offset' style='display: none'><label for='dx'>Delta X (Horizontal offset)</label><br/>"
+					"<input type='number' name='dx' value='0' min='-%I64d' max='%I64d' /></p>"
+					"<p class='offset' style='display: none'><label for='dy'>Delta Y (Vertical offset)</label><br/>"
+					"<input type='number' name='dy' value='0' min='-%I64d' max='%I64d' /></p>"
+					"<p><label for='speed'>Velocity</label><br/>"
+					"<select name='speed'>"
+					"<option value=0>Instantaneous</option>"
+					"<option value=1>Very fast</option>"
+					"<option value=3>Fast</option>"
+					"<option value=4>Average</option>"
+					"<option value=5>Slow</option>"
+					"<option value=7>Slower</option>"
+					"<option value=10>Very slow</option>"
+					"</select></p>"
+					"<p><input type='button' onclick=\"onSwitchOffset(event)\" value='Switch to offset movement' /></p>"
+					"<input type='submit' value='Move' />"
+					"</form><script>\r\n"
+					"function onSwitchOffset(event) {\r\n"
+					"event.target.setAttribute(\"onclick\", \"onSwitchSpecific(event)\");\r\n"
+					"event.target.value = \"Switch to specific position\";\r\n"
+					"document.querySelectorAll('.specific input').forEach(elem => elem.disabled = true);\r\n"
+					"document.querySelectorAll('.offset input').forEach(elem => elem.disabled = false);\r\n"
+					"document.querySelectorAll('.specific').forEach(elem => elem.style.display = 'none');\r\n"
+					"document.querySelectorAll('.offset').forEach(elem => elem.style.display = '');\r\n"
+					"}\r\n"
+					"function onSwitchSpecific(event) {\r\n"
+					"event.target.setAttribute(\"onclick\", \"onSwitchOffset(event)\");\r\n"
+					"event.target.value = \"Switch to offset movement\";\r\n"
+					"document.querySelectorAll('.specific input').forEach(elem => elem.disabled = false);\r\n"
+					"document.querySelectorAll('.offset input').forEach(elem => elem.disabled = true);\r\n"
+					"document.querySelectorAll('.specific').forEach(elem => elem.style.display = '');\r\n"
+					"document.querySelectorAll('.offset').forEach(elem => elem.style.display = 'none');\r\n"
+					"}\r\n"
+					"</script>",
+					screen_width, screen_height,
+					screen_width, screen_width,
+					screen_height, screen_height
+				),
+				content_buffer
+			);
 		} else {
 			buffer_size = snprintf(
 				buffer,

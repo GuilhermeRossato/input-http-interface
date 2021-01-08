@@ -1,8 +1,8 @@
 # Mouse and Keyboard control via HTTP [Unfinished]
 
-This repository is a project for building a simple C/C++ program to manipulate input (keyboard and mouse) via the HTTP requests.
+This repository is a project for compiling a program to manipulate input (keyboard and mouse) via HTTP requests.
 
-The program exposes a HTTP server in a specified port (default 8082) to allow for any program (e.g. a Web Browser) to send mouse and keyboard changes to your computer.
+The program exposes a HTTP server in a specified port (default 8082) to allow for any program (e.g. a Web Browser) to send mouse and keyboard changes to your computer through a simple method-like interface.
 
 It was developed to work on Windows and does not support other operational systems as of now.
 
@@ -12,7 +12,7 @@ Download a release from the [releases page](https://github.com/GuilhermeRossato/
 
 ![Menu Screen](https://raw.githubusercontent.com/GuilhermeRossato/input-http-interface/master/demo.png)
 
-Check the standard and error output to check for errors if anything went wrong.
+Check the standard output if anything went wrong, the program should be very verbose.
 
 ## Feature examples
 

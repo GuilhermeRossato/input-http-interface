@@ -26,11 +26,11 @@ To get the current mouse position in plain text (two integers, x and y, separate
 
 To move the mouse to the right by 100 pixels instantly:
 
-**Unimplemented** `POST` http://localhost:8082/mouse/move/?dx=100
+`POST` http://localhost:8082/mouse/move/?dx=100
 
 To move the mouse to a specific position slowly (like a human would):
 
-**Unimplemented** `POST` http://localhost:8082/mouse/move/?x=100&y=100&speed=3
+`POST` http://localhost:8082/mouse/move/?x=100&y=100&speed=3
 
 To get the screen size (to know the limits of the mouse) in JSON format:
 
